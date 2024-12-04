@@ -1,0 +1,68 @@
+\documentclass[11pt]{article}
+
+\input{$HOME/imajin/preamble.tex}
+
+\begin{document}
+
+\lstset{language=C++,basicstyle=\footnotesize\ttfamily,breaklines=true}
+
+\fancyhf{}
+\fancyhead[R]{Matthew Jin (mjin2002)}
+\setlength{\headheight}{14pt}
+\pagestyle{fancy}
+
+\centerline{\Large CS 149: Programming Assignment 4}
+\centerline{Autumn 2024-25}
+
+\section{Learning the Neuron Kernel Interface with Vector Add}
+
+\paragraph{Step 1: Chunking Vectors to Parallelize Across 128 Compute Lanes}
+
+The execution time is \SI{33554}{\micro\second} with \ttt{ROW\_CHUNK=1} and
+\SI{144}{\micro\second} with \ttt{ROW\_CHUNK=128}. Using a larger
+\ttt{ROW\_CHUNK} value speeds up execution because it is vectorizing the load
+(parallel load) and add (vector engine add) operations. However, setting
+\ttt{ROW\_CHUNK=256} produces an error because the largest partition size
+supported by the Neuron SDK is 128.
+
+\paragraph{Step 2a: Improved Data Streaming}
+
+The execution time is \SI{52}{\micro\second} with \ttt{FREE\_DIM=2} which is
+significantly faster (2.77x) than using \ttt{vector\_add\_tiled} with
+\ttt{ROW\_CHUNK=128}. To minimize DMA transfers, we choose \ttt{FREE\_DIM=200}
+since $128 \times 200 = 25600$, so every element can be loaded in a single DMA
+transfer. This gives us an execution time of \SI{19}{\micro\second} which is
+7.58x faster than \ttt{vector\_add\_tiled} with \ttt{ROW\_CHUNK=128}.
+
+\paragraph{Step 2b: Learning to Use Neuron-Profile}
+
+For \ttt{FREE\_DIM=2000}, the kernel execution time is \SI{3.32e-05}{\second}
+and it uses 3 DMA transfers. For \ttt{FREE\_DIM=1000}, the kernel execution time
+is \SI{2.96e-05}{\second} and it uses 6 DMA transfers. After inspecting the
+profiles for the two runs, we see that with \ttt{FREE\_DIM=2000}, the program
+loads the two input vectors in their entirety before proceeding with
+computation and transferring the result back to device memory. With
+\ttt{FREE\_DIM=1000}, the program first loads half of each input array. Then,
+while computation is being done on the loaded half, it schedules the load for
+the second half of the inputs. By interleaving the memory and computation
+operations, the program \ttt{FREE\_DIM=1000} has a faster execution time.
+
+\paragraph{Step 3: Direct Allocation}
+
+\ttt{vector\_add\_direct\_allocation} has an execution time of
+\SI{29}{\micro\second} while \ttt{vector\_add\_stream} with \ttt{FREE\_DIM=1000}
+also takes \SI{29}{\micro\second}. Each input tensor is allocated 4 physical
+tiles. If we set the number of physical tiles too large, we run into the
+potential issue of not having enough SBUF memory to hold all the physical tiles
+which prevents the program from running.
+
+\smallskip
+Running \ttt{vector\_add\_direct\_allocation\_bad} results in a correctness
+error since each call to \ttt{ncc.sbuf.mod\_alloc} passes in the same
+\ttt{base\_addr}. As such, each logical tile allocated by the function call
+starts at the same address which causes memory accesses to conflict with one
+another.
+
+\section{Implementing a Fused Convolution - Max Pool Layer}
+
+\end{document}
